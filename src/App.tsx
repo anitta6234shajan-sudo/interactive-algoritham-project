@@ -61,11 +61,15 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('algorithm_progress').select('*');
-      if (data) {
-        const map: Record<string, ProgressRecord> = {};
-        data.forEach((r: ProgressRecord) => { map[r.algorithm_id] = r; });
-        setProgress(map);
+      try {
+        const { data } = await supabase.from('algorithm_progress').select('*');
+        if (data) {
+          const map: Record<string, ProgressRecord> = {};
+          data.forEach((r: ProgressRecord) => { map[r.algorithm_id] = r; });
+          setProgress(map);
+        }
+      } catch (err) {
+        console.warn('Could not fetch progress from Supabase:', err);
       }
     })();
   }, []);
@@ -86,23 +90,41 @@ export default function App() {
 
   const updateVisitProgress = useCallback(async (algoId: string) => {
     const existing = progress[algoId];
+    const now = new Date().toISOString();
     if (existing) {
-      await supabase
-        .from('algorithm_progress')
-        .update({ status: 'in-progress' as ProgressStatus, last_visited_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .eq('id', existing.id);
       setProgress((prev) => ({
         ...prev,
-        [algoId]: { ...prev[algoId], status: 'in-progress' as ProgressStatus, last_visited_at: new Date().toISOString() },
+        [algoId]: { ...prev[algoId], status: 'in-progress' as ProgressStatus, last_visited_at: now },
       }));
+      try {
+        await supabase
+          .from('algorithm_progress')
+          .update({ status: 'in-progress' as ProgressStatus, last_visited_at: now, updated_at: now })
+          .eq('id', existing.id);
+      } catch (err) {
+        console.warn('Error updating progress:', err);
+      }
     } else {
-      const { data } = await supabase
-        .from('algorithm_progress')
-        .insert({ algorithm_id: algoId, status: 'in-progress' as ProgressStatus, last_visited_at: new Date().toISOString() })
-        .select()
-        .single();
-      if (data) {
-        setProgress((prev) => ({ ...prev, [algoId]: data as ProgressRecord }));
+      const tempRecord: ProgressRecord = {
+        id: 'local_' + Date.now(),
+        algorithm_id: algoId,
+        status: 'in-progress',
+        best_score: null,
+        attempts: 0,
+        last_visited_at: now,
+      };
+      setProgress((prev) => ({ ...prev, [algoId]: tempRecord }));
+      try {
+        const { data } = await supabase
+          .from('algorithm_progress')
+          .insert({ algorithm_id: algoId, status: 'in-progress' as ProgressStatus, last_visited_at: now })
+          .select()
+          .single();
+        if (data) {
+          setProgress((prev) => ({ ...prev, [algoId]: data as ProgressRecord }));
+        }
+      } catch (err) {
+        console.warn('Error inserting progress:', err);
       }
     }
   }, [progress]);
@@ -157,18 +179,10 @@ export default function App() {
   const handleQuizComplete = async (score: number) => {
     const existing = progress[selectedAlgo.id];
     const newStatus: ProgressStatus = score >= 67 ? 'completed' : 'in-progress';
+    const now = new Date().toISOString();
 
     if (existing) {
       const bestScore = existing.best_score == null ? score : Math.max(existing.best_score, score);
-      await supabase
-        .from('algorithm_progress')
-        .update({
-          status: newStatus,
-          best_score: bestScore,
-          attempts: existing.attempts + 1,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', existing.id);
       setProgress((prev) => ({
         ...prev,
         [selectedAlgo.id]: {
@@ -178,19 +192,45 @@ export default function App() {
           attempts: existing.attempts + 1,
         },
       }));
+      try {
+        await supabase
+          .from('algorithm_progress')
+          .update({
+            status: newStatus,
+            best_score: bestScore,
+            attempts: existing.attempts + 1,
+            updated_at: now,
+          })
+          .eq('id', existing.id);
+      } catch (err) {
+        console.warn('Error updating quiz score:', err);
+      }
     } else {
-      const { data } = await supabase
-        .from('algorithm_progress')
-        .insert({
-          algorithm_id: selectedAlgo.id,
-          status: newStatus,
-          best_score: score,
-          attempts: 1,
-        })
-        .select()
-        .single();
-      if (data) {
-        setProgress((prev) => ({ ...prev, [selectedAlgo.id]: data as ProgressRecord }));
+      const tempRecord: ProgressRecord = {
+        id: 'local_' + Date.now(),
+        algorithm_id: selectedAlgo.id,
+        status: newStatus,
+        best_score: score,
+        attempts: 1,
+        last_visited_at: now,
+      };
+      setProgress((prev) => ({ ...prev, [selectedAlgo.id]: tempRecord }));
+      try {
+        const { data } = await supabase
+          .from('algorithm_progress')
+          .insert({
+            algorithm_id: selectedAlgo.id,
+            status: newStatus,
+            best_score: score,
+            attempts: 1,
+          })
+          .select()
+          .single();
+        if (data) {
+          setProgress((prev) => ({ ...prev, [selectedAlgo.id]: data as ProgressRecord }));
+        }
+      } catch (err) {
+        console.warn('Error inserting quiz score:', err);
       }
     }
   };
